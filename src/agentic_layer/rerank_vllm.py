@@ -4,18 +4,13 @@ vLLM (Self-Deployed) Rerank Service Implementation
 Reranking service for self-deployed vLLM or similar OpenAI-compatible services.
 """
 
-import os
 import asyncio
 import aiohttp
 import logging
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
-from agentic_layer.rerank_interface import (
-    RerankServiceInterface,
-    RerankError,
-    RerankMemResponse,
-)
+from agentic_layer.rerank_interface import RerankServiceInterface, RerankError
 from api_specs.memory_models import MemoryType
 
 logger = logging.getLogger(__name__)
@@ -128,53 +123,86 @@ class VllmRerankService(RerankServiceInterface):
                     logger.error(f"Unexpected error in vLLM rerank request: {e}")
                     raise RerankError(f"Unexpected rerank error: {e}")
 
+    def _extract_text_from_hit(self, hit: Dict[str, Any]) -> str:
+        """Extract and concatenate text based on memory_type"""
+        source = hit.get('_source', hit)
+        memory_type = hit.get('memory_type', '')
+
+        # Extract text based on memory_type
+        match memory_type:
+            case MemoryType.EPISODIC_MEMORY.value:
+                episode = source.get('episode', '')
+                if episode:
+                    return f"Episode Memory: {episode}"
+            case MemoryType.FORESIGHT.value:
+                foresight = source.get('foresight', '') or source.get('content', '')
+                evidence = source.get('evidence', '')
+                if foresight:
+                    if evidence:
+                        return f"Foresight: {foresight} (Evidence: {evidence})"
+                    return f"Foresight: {foresight}"
+            case MemoryType.EVENT_LOG.value:
+                atomic_fact = source.get('atomic_fact', '')
+                if atomic_fact:
+                    return f"Atomic Fact: {atomic_fact}"
+
+        # Generic fallback
+        if source.get('episode'):
+            return source['episode']
+        if source.get('atomic_fact'):
+            return source['atomic_fact']
+        if source.get('foresight'):
+            return source['foresight']
+        if source.get('content'):
+            return source['content']
+        if source.get('summary'):
+            return source['summary']
+        if source.get('subject'):
+            return source['subject']
+        return str(hit)
+
     async def rerank_memories(
         self,
         query: str,
-        memories: List[RerankMemResponse],
-        memory_type: MemoryType,
+        hits: List[Dict[str, Any]],
         top_k: Optional[int] = None,
         instruction: Optional[str] = None,
-    ) -> List[RerankMemResponse]:
+    ) -> List[Dict[str, Any]]:
         """
         Rerank memories using vLLM reranking service
 
         Args:
             query: Search query
-            memories: List of memories to rerank
-            memory_type: Type of memory (episodic or semantic)
+            hits: List of memory hits to rerank
             top_k: Return top K results (optional)
             instruction: Optional instruction for reranking
 
         Returns:
-            List of reranked memories
+            List of reranked memory hits, sorted by relevance score
         """
-        if not memories:
+        if not hits:
             return []
 
-        # Prepare documents for reranking
+        # Extract text content from hits for reranking
         documents = []
-        for mem in memories:
-            if memory_type == MemoryType.EPISODIC:
-                # For episodic: use content
-                doc_text = mem.content or ""
-            else:  # SEMANTIC
-                # For semantic: use memory_text
-                doc_text = mem.memory_text or ""
-            documents.append(doc_text)
+        for hit in hits:
+            text = self._extract_text_from_hit(hit)
+            documents.append(text)
+
+        if not documents:
+            return []
 
         # Send rerank request
         try:
             result = await self._send_rerank_request_batch(
-                query=query,
-                documents=documents,
-                start_index=0,
-                instruction=instruction,
+                query=query, documents=documents, start_index=0, instruction=instruction
             )
 
             # Parse results (OpenAI-compatible format)
             if "results" not in result:
-                raise RerankError(f"Invalid rerank response format: missing 'results' key")
+                raise RerankError(
+                    f"Invalid rerank response format: missing 'results' key"
+                )
 
             # Create score mapping
             score_map = {}
@@ -184,91 +212,39 @@ class VllmRerankService(RerankServiceInterface):
                 if index is not None:
                     score_map[index] = score
 
-            # Update memory scores
-            reranked_memories = []
-            for i, mem in enumerate(memories):
+            # Create reranked hits with updated scores
+            reranked_hits = []
+            for i, hit in enumerate(hits):
                 if i in score_map:
-                    mem.rerank_score = score_map[i]
-                    reranked_memories.append(mem)
+                    hit_copy = hit.copy()
+                    hit_copy['score'] = score_map[i]  # Update score
+                    reranked_hits.append(hit_copy)
 
             # Sort by rerank score (descending)
-            reranked_memories.sort(key=lambda x: x.rerank_score or 0.0, reverse=True)
+            reranked_hits.sort(key=lambda x: x.get('score', 0.0), reverse=True)
 
             # Apply top_k if specified
             if top_k is not None and top_k > 0:
-                reranked_memories = reranked_memories[:top_k]
+                reranked_hits = reranked_hits[:top_k]
 
-            logger.info(
-                f"Reranked {len(memories)} memories -> {len(reranked_memories)} results | "
-                f"memory_type={memory_type.value} | top_k={top_k}"
-            )
-            return reranked_memories
+            # Log results
+            if reranked_hits:
+                top_scores = [f"{h.get('score', 0):.4f}" for h in reranked_hits[:3]]
+                logger.info(
+                    f"Reranked {len(hits)} hits -> {len(reranked_hits)} results, "
+                    f"top scores: {top_scores}"
+                )
+
+            return reranked_hits
 
         except Exception as e:
             logger.error(f"Error in rerank_memories: {e}")
-            raise RerankError(f"Failed to rerank memories: {e}")
-
-    async def rerank_documents(
-        self,
-        query: str,
-        documents: List[str],
-        top_k: Optional[int] = None,
-        instruction: Optional[str] = None,
-    ) -> List[Dict[str, Union[int, str, float]]]:
-        """
-        Rerank documents using vLLM reranking service
-
-        Args:
-            query: Search query
-            documents: List of document texts
-            top_k: Return top K results (optional)
-            instruction: Optional instruction for reranking
-
-        Returns:
-            List of reranked documents with scores
-        """
-        if not documents:
-            return []
-
-        try:
-            result = await self._send_rerank_request_batch(
-                query=query,
-                documents=documents,
-                start_index=0,
-                instruction=instruction,
-            )
-
-            # Parse results (OpenAI-compatible format)
-            if "results" not in result:
-                raise RerankError(f"Invalid rerank response format: missing 'results' key")
-
-            # Format results
-            reranked_docs = []
-            for item in result["results"]:
-                doc_dict = {
-                    "index": item.get("index"),
-                    "document": item.get("document", {}).get("text", ""),
-                    "relevance_score": item.get("relevance_score", 0.0),
-                }
-                reranked_docs.append(doc_dict)
-
-            # Sort by relevance score (descending)
-            reranked_docs.sort(key=lambda x: x["relevance_score"], reverse=True)
-
-            # Apply top_k if specified
+            # If reranking fails, return original results (sorted by original score)
+            sorted_hits = sorted(hits, key=lambda x: x.get('score', 0), reverse=True)
             if top_k is not None and top_k > 0:
-                reranked_docs = reranked_docs[:top_k]
-
-            logger.info(
-                f"Reranked {len(documents)} documents -> {len(reranked_docs)} results | top_k={top_k}"
-            )
-            return reranked_docs
-
-        except Exception as e:
-            logger.error(f"Error in rerank_documents: {e}")
-            raise RerankError(f"Failed to rerank documents: {e}")
+                sorted_hits = sorted_hits[:top_k]
+            return sorted_hits
 
     def get_model_name(self) -> str:
         """Get the current model name"""
         return self.config.model
-
