@@ -41,6 +41,11 @@ class EpisodicMemory(DocumentBase, AuditBase):
         default=None, description="Memory unit event ID"
     )
 
+    parent_type: Optional[str] = Field(
+        default=None, description="Parent memory type (e.g., memcell)"
+    )
+    parent_id: Optional[str] = Field(default=None, description="Parent memory ID")
+
     extend: Optional[Dict[str, Any]] = Field(
         default=None, description="Reserved extension field"
     )

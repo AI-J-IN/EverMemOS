@@ -91,6 +91,18 @@ class EpisodicMemoryCollection(TenantAwareMilvusCollectionWithSuffix):
                 description="Detailed non-retrieval information in JSON (metadata)",
             ),
             FieldSchema(
+                name="parent_type",
+                dtype=DataType.VARCHAR,
+                max_length=100,
+                description="Parent memory type (e.g., memcell)",
+            ),
+            FieldSchema(
+                name="parent_id",
+                dtype=DataType.VARCHAR,
+                max_length=100,
+                description="Parent memory ID",
+            ),
+            FieldSchema(
                 name="created_at",
                 dtype=DataType.INT64,
                 description="Creation timestamp",
