@@ -67,23 +67,7 @@ Group all conversations related to a specific project.
 - Query project-specific knowledge: "What was decided about the login flow?"
 - Generate project progress summaries
 
-### 3. Multi-Tenant Applications
-
-Isolate memories between different customers or organizations.
-
-```json
-{
-  "group_id": "tenant_acme_corp",
-  "group_name": "ACME Corporation"
-}
-```
-
-**Benefits:**
-- Complete data isolation between tenants
-- Tenant-specific memory retrieval
-- Compliance with data separation requirements
-
-### 4. Channel-Based Conversations (Slack/Discord Style)
+### 3. Channel-Based Conversations (Slack/Discord Style)
 
 Mirror your communication platform's channel structure.
 
@@ -106,7 +90,7 @@ Mirror your communication platform's channel structure.
 - Search within specific channels
 - Channel-specific summaries and insights
 
-### 5. Customer Support Conversations
+### 4. Customer Support Conversations
 
 Group support tickets or customer interactions.
 
@@ -122,7 +106,7 @@ Group support tickets or customer interactions.
 - Generate case summaries for handoffs
 - Query similar past issues
 
-### 6. Meeting Transcripts
+### 5. Meeting Transcripts
 
 Organize meeting notes and transcripts.
 
